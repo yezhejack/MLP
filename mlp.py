@@ -22,7 +22,7 @@ class DataIter():
             self.y_dim = y.shape[1]
         self.batch_size = batch_size
         self.curr=0
-    
+
     def next_batch(self):
         x = np.zeros([self.batch_size, self.x_dim])
         y = np.zeros([self.batch_size, self.y_dim])
@@ -50,7 +50,8 @@ class DataIter():
         self.y = self.y[shuffle_indices]
         self.curr = 0
 
-def data_read(path='data/letter-recognition.data',targets=['O','X']):
+# targets=['O','D'] or targets['O','X']
+def data_read(path='data/letter-recognition.data',targets=['O','D'],feature_filter=[]):
     raw_data = []
     with open(path) as f:
         line = f.readline()
@@ -58,24 +59,37 @@ def data_read(path='data/letter-recognition.data',targets=['O','X']):
             if line[0] in targets:
                 raw_data.append(line.strip().split(','))
             line = f.readline()
-    
-    size = len(raw_data)
-    dim = len(raw_data[0])-1
-    data = np.zeros([size, dim])
-    labels = np.zeros([size,1])
-    for i in range(size):
-        if raw_data[i][0]==targets[0]:
-            labels[i]=0
-        else:
-            labels[i]=1
-        for j in range(dim):
-            data[i][j]=int(raw_data[i][j+1])
+    if len(feature_filter)==0:
+        size = len(raw_data)
+        dim = len(raw_data[0])-1
+        data = np.zeros([size, dim])
+        labels = np.zeros([size,1])
+        for i in range(size):
+            if raw_data[i][0]==targets[0]:
+                labels[i]=0
+            else:
+                labels[i]=1
+            for j in range(dim):
+                data[i][j]=int(raw_data[i][j+1])
+    else:
+        size = len(raw_data)
+        dim = len(feature_filter)
+        data = np.zeros([size, dim])
+        labels = np.zeros([size,1])
+        for i in range(size):
+            if raw_data[i][0]==targets[0]:
+                labels[i]=0
+            else:
+                labels[i]=1
+            for j in range(dim):
+                data[i][j]=int(raw_data[i][feature_filter[j]])
+
     return data,labels,size,dim
 
 # Perceptron layer
 # All variable are row vectors
 class Perceptron():
-    def __init__(self, batch_size, input_size, output_size, isOutput=False,lr=2) :
+    def __init__(self, batch_size, input_size, output_size, isOutput=False,lr=1) :
         self.batch_size = batch_size
         self.input_size = input_size
         self.output_size = output_size
@@ -97,13 +111,13 @@ class Perceptron():
         self.output = self.input.dot(self.weight) + self.bias
         self.output = 1/(1+np.exp(-self.output))
         return self.output
-    
+
     def evaluate_loss(self,y):
         return 0.5*np.average(np.square(self.output - y))
-    
+
     def set_error_signal(self, error_signal):
         self.error_signal = error_signal
-    
+
     # Return the previous layer error_signal
     def calculate_grad(self):
         self.grad_weight = self.input.T.dot(self.error_signal * self.output * (1 - self.output))
@@ -111,7 +125,7 @@ class Perceptron():
 
         self.grad_bias = np.average(self.error_signal * self.output * (1 - self.output),axis=0)
         return  np.dot(self.error_signal * self.output * (1 - self.output), self.weight.T)
-    
+
     def update(self):
         self.weight -= self.lr * self.grad_weight
         self.bias -= self.lr * self.grad_bias
@@ -136,14 +150,14 @@ class Network():
 
         for layer in self.layers:
             layer.update()
-    
+
     def evaluate_loss(self,y):
         return self.layers[-1].evaluate_loss(y)
 
 def evaluate(nn, data_iter):
     data_iter.curr = 0
-    iters = data_iter.size / batch_size
-    if train_iter.size % batch_size >0:
+    iters = data_iter.size / data_iter.batch_size
+    if data_iter.size % data_iter.batch_size >0:
         iters+=1
     output_list = []
     for i in range(iters):
@@ -153,17 +167,22 @@ def evaluate(nn, data_iter):
     loss = 0.5*np.average(np.square(predictions - data_iter.y))
     correct_rate = np.sum((predictions > 0.5) == (data_iter.y > 0.5))/float(data_iter.size)
     return predictions,loss,correct_rate
-    
-if __name__=="__main__":
-    batch_size=200
-    hidden_num=3
-    layer_shapes = [0,10]
+
+def main(feature_filter=[]):
+    # You can set some parameters for training
+    batch_size=32
+    # layers shape [0,hidden1,hidden2,...]
+    layer_shapes = [0,3]
+    # output size
     output_size=1
-    epoch = 100000
+    epoch = 20000
     evaluate_every_steps = 100
-    
+
     np.random.seed(int(time.time()))
-    x,y,size,dim=data_read()
+    x,y,size,dim=data_read(feature_filter=feature_filter)
+    shuffle_indices = np.random.permutation(np.arange(size))
+    x=x[shuffle_indices]
+    y=y[shuffle_indices]
     dev_size = int(0.3*size)
     train_iter = DataIter(x[-dev_size:],y[-dev_size:],batch_size)
     dev_iter = DataIter(x[:-dev_size],y[:-dev_size],batch_size)
@@ -173,7 +192,6 @@ if __name__=="__main__":
     for i in range(1,len(layer_shapes)):
         layers.append(Perceptron(batch_size, layer_shapes[i-1], layer_shapes[i]))
     nn = Network(layers)
-
     for i in range(epoch):
         iters = train_iter.size / batch_size
         if train_iter.size % batch_size >0:
@@ -191,9 +209,32 @@ if __name__=="__main__":
             logging.info('[epoch %d]dev data loss: %f, dev data correct rate: %f' %(i,dev_loss,dev_correct))
 
         train_iter.shuffle()
-    
+
     train_pre,train_loss,train_correct = evaluate(nn, train_iter)
     dev_pre,dev_loss,dev_correct = evaluate(nn, dev_iter)
     with open('result.txt','w') as f:
         for pre,label in zip(train_pre,train_iter.y):
             f.write('%f\t%d\n' % (pre,label))
+    return train_correct,dev_correct
+if __name__=="__main__":
+    # if you want to using specfic feature, you should change feature_filter
+    # e.g. feature_filter=[1,2] specfic the first 2 dimensions of original features are used for training
+    feature_filter=[]
+    main(feature_filter)
+    '''
+    max_dev_correct=0.0
+    while True:
+        candidate=-1
+        for i in range(1,17):
+            if i not in feature_filter:
+                _,dev_correct = main(feature_filter+[i])
+                if dev_correct > max_dev_correct:
+                    max_dev_correct = dev_correct
+                    candidate = i
+        if candidate == -1:
+            break
+        else:
+            feature_filter.append(candidate)
+    print(feature_filter)
+    print(max_dev_correct)
+    '''
